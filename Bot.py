@@ -1,4 +1,6 @@
 import telebot
+from flask import Flask
+import os
 
 # Replace 'YOUR_TOKEN' with the API Token from BotFather
 bot = telebot.TeleBot(os.environ.get('BOT_TOKEN'))
@@ -19,8 +21,6 @@ bot.infinity_polling()
 #SERVER TO KEEP RENDER WEBSERVICE HAPPY
 
 
-import os
-from flask import Flask
 app = Flask(__name__)
 
 @app.route('/')
