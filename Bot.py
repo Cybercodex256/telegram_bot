@@ -1,10 +1,8 @@
+from os import environ
 import telebot
-from flask import Flask
-import os
 
 # Replace 'YOUR_TOKEN' with the API Token from BotFather
-bot = telebot.TeleBot(os.environ.get('BOT_TOKEN'))
-
+bot = telebot.TeleBot(environ.get('BOT_TOKEN'))
 # Handles the /start command
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -18,18 +16,4 @@ def echo_all(message):
 print("Bot is running...")
 bot.infinity_polling()
 
-#SERVER TO KEEP RENDER WEBSER
-app = Flask(__name__)
-
-@app.route('/')
-def health_check():
-    return "Bot is alive!", 200
-
-if __name__ == "__main__":
-    # Start a tiny web server in the background
-    from threading import Thread
-    Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))).start()
-    
-    # Start your bot polling
-    bot.infinity_polling()
 
