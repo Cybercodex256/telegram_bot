@@ -1,51 +1,44 @@
 import os
-import asyncio
 from flask import Flask, request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import Bot, Update
 
 # Configuration
 TOKEN = "8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c"
-URL = "https://telegram-bot-zxg0.onrender.com"
 
 app = Flask(__name__)
-
-# Initialize Application without starting it globally
-ptb_app = Application.builder().token(TOKEN).build()
-
-async def start(update: Update, context):
-    await update.message.reply_text("Mirror bot is active!")
-
-async def mirror(update: Update, context):
-    if update.message:
-        await update.message.copy(chat_id=update.effective_chat.id)
-
-# Setup handlers
-ptb_app.add_handler(CommandHandler("start", start))
-ptb_app.add_handler(MessageHandler(filters.ALL, mirror))
+bot = Bot(token=TOKEN)
 
 @app.route("/", methods=["POST"])
-async def webhook():
-    """This handles the incoming POST from Telegram"""
+def webhook():
+    """Handles the POST request from Telegram"""
     try:
-        # Use the global ptb_app to process the update
-        async with ptb_app:
-            update = Update.de_json(request.get_json(force=True), ptb_app.bot)
-            await ptb_app.process_update(update)
+        # 1. Get the data from the request
+        data = request.get_json(force=True)
+        update = Update.de_json(data, bot)
+        
+        # 2. Extract message details
+        if update.message:
+            chat_id = update.message.chat_id
+            text = update.message.text
+            
+            # 3. Logic: Handle /start or Mirror
+            if text == "/start":
+                bot.send_message(chat_id=chat_id, text="Python Mirror Bot is online!")
+            else:
+                # Mirror the message back
+                update.message.copy(chat_id=chat_id)
+                
         return "OK", 200
     except Exception as e:
-        print(f"Error processing update: {e}")
+        print(f"Error: {e}")
         return "Internal Error", 500
 
-@app.route("/set_webhook", methods=["GET"])
-async def register_webhook():
-    """Visit this URL once in your browser to link the bot to Render"""
-    async with ptb_app:
-        success = await ptb_app.bot.set_webhook(url=URL)
-    return f"Webhook setup: {success}", 200
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot is running!", 200
 
 if __name__ == "__main__":
+    # Render uses the PORT environment variable
     port = int(os.environ.get("PORT", 5000))
-    # Note: In production on Render, use a proper ASGI server or Flask's async mode
     app.run(host="0.0.0.0", port=port)
 
