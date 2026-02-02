@@ -1,37 +1,37 @@
 import telebot
 from flask import Flask
+import threading
 import os
 
-# Replace 'YOUR_TOKEN' with the API Token from BotFather
-bot = telebot.TeleBot("8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c")
-
-# Handles the /start command
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "Hello! I am your new bot. How can I help?")
-
-# Echoes all incoming text messages
-@bot.message_handler(func=lambda message: True)
-def echo_all(message):
-    bot.reply_to(message, message.text)
-
-print("Bot is running...")
-bot.infinity_polling()
-
-#SERVER TO KEEP RENDER WEBSERVICE HAPPY
-
-
+# 1. Setup Flask
 app = Flask(__name__)
 
 @app.route('/')
 def health_check():
     return "Bot is alive!", 200
 
+def run_flask():
+    # Render usually uses port 10000 or the PORT env variable
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# 2. Setup Bot
+bot = telebot.TeleBot("8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c") # Use your full token
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "Hello! I am your new bot. How can I help?")
+
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    bot.reply_to(message, message.text)
+
+# 3. Start both
 if __name__ == "__main__":
-    # Start a tiny web server in the background
-    from threading import Thread
-    Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))).start()
+    # Start Flask in a background thread
+    threading.Thread(target=run_flask).start()
     
-    # Start your bot polling
+    print("Webserver started, bot is now polling...")
+    # Start the bot (this blocks the main thread)
     bot.infinity_polling()
 
