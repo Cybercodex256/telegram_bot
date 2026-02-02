@@ -3,7 +3,7 @@ from flask import Flask
 import os
 
 # Replace 'YOUR_TOKEN' with the API Token from BotFather
-bot = telebot.TeleBot(os.environ.get('BOT_TOKEN'))
+bot = telebot.TeleBot("8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c")
 
 # Handles the /start command
 @bot.message_handler(commands=['start'])
