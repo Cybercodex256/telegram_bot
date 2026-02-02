@@ -21,3 +21,4 @@ urllib3==2.6.3
 Werkzeug==3.1.5
 yt-dlp==2026.1.31
 static-ffmpeg==2.5
+yt-dlp-youtube-oauth2

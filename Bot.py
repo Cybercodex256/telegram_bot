@@ -31,10 +31,11 @@ def handle_video(message):
     # We use 'bestvideo[filesize<50M]+bestaudio/best[filesize<50M]' 
     # to try and stay under the Telegram limit.
     ydl_opts = {
-        'cookiefile':'cookies.txt',
+        'username': 'oauth2',
+        'password': '',
         'format': 'best[ext=mp4][filesize<50M]/best[filesize<50M]',
         'outtmpl': '%(title)s.%(ext)s',
-        'quiet': True
+        'quiet': False
     }
 
     try:
