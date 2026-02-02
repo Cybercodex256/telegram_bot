@@ -1,51 +1,61 @@
 import os
-import asyncio
 from flask import Flask, request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import Update, Bot
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # Configuration
 TOKEN = "8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c"
 URL = "https://telegram-bot-zxg0.onrender.com"
 
+# Initialize Flask app
 app = Flask(__name__)
 
-# Initialize Application without starting it globally
+# Initialize Telegram Application
+# We use this to handle the logic, but we won't use .run_polling()
 ptb_app = Application.builder().token(TOKEN).build()
 
-async def start(update: Update, context):
-    await update.message.reply_text("Mirror bot is active!")
+# 1. /start command handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("I'm a Python mirror bot! Send me anything.")
 
-async def mirror(update: Update, context):
-    if update.message:
-        await update.message.copy(chat_id=update.effective_chat.id)
+# 2. Mirror handler
+async def mirror(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # This mirrors text, stickers, photos, etc. back to the user
+    await update.message.copy(chat_id=update.effective_chat.id)
 
-# Setup handlers
+# Register handlers
 ptb_app.add_handler(CommandHandler("start", start))
 ptb_app.add_handler(MessageHandler(filters.ALL, mirror))
 
+# 3. The Webhook Route (Crucial for fixing the 405 error)
 @app.route("/", methods=["POST"])
 async def webhook():
-    """This handles the incoming POST from Telegram"""
-    try:
-        # Use the global ptb_app to process the update
-        async with ptb_app:
-            update = Update.de_json(request.get_json(force=True), ptb_app.bot)
-            await ptb_app.process_update(update)
+    """Handle incoming Telegram updates."""
+    if request.method == "POST":
+        # Process the update
+        update = Update.de_json(request.get_json(force=True), ptb_app.bot)
+        await ptb_app.initialize()
+        await ptb_app.process_update(update)
         return "OK", 200
-    except Exception as e:
-        print(f"Error processing update: {e}")
-        return "Internal Error", 500
 
-@app.route("/set_webhook", methods=["GET"])
-async def register_webhook():
-    """Visit this URL once in your browser to link the bot to Render"""
-    async with ptb_app:
-        success = await ptb_app.bot.set_webhook(url=URL)
-    return f"Webhook setup: {success}", 200
+@app.route("/health", methods=["GET"])
+def health_check():
+    """A simple GET route for Render's health checks."""
+    return "Bot is alive!", 200
 
 if __name__ == "__main__":
+    # 4. Set the webhook with Telegram
+    # In production, it's better to do this once, but this ensures it's set on startup
+    import asyncio
+    
+    async def set_webhook():
+        bot = Bot(TOKEN)
+        await bot.set_webhook(url=URL)
+    
+    # Run the setup and the Flask app
+    asyncio.run(set_webhook())
+    
+    # Render provides the PORT environment variable
     port = int(os.environ.get("PORT", 5000))
-    # Note: In production on Render, use a proper ASGI server or Flask's async mode
     app.run(host="0.0.0.0", port=port)
 
