@@ -33,7 +33,7 @@ def handle_video(message):
     ydl_opts = {
         'proxy':'http://opfxmeil:dqti3mkecvnk@31.59.20.176:6754/',
         #'format': 'best[ext=mp4][filesize<50M]/best[filesize<50M]',
-        'format':'best',
+        'format':"bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         'outtmpl': '%(title)s.%(ext)s',
         'quiet': True
     }
