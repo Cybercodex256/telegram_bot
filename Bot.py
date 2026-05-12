@@ -23,6 +23,9 @@ def run_flask():
 # 2. Setup Bot
 bot = telebot.TeleBot("8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c")
 
+# ADD YOUR CHANNEL ID HERE (Use the -100 prefix)
+STORAGE_CHANNEL_ID = "-1006523949834" 
+
 # Dictionary to store URLs temporarily
 user_links = {}
 
@@ -53,7 +56,7 @@ def handle_query(call):
         return
 
     bot.answer_callback_query(call.id, "Starting download...")
-    status = bot.send_message(call.message.chat.id, "⏳ Processing...")
+    status = bot.send_message(call.message.chat.id, "⏳ Processing and Cloud Saving...")
 
     # Your strict proxy and download settings
     proxy_url = 'http://opfxmeil:dqti3mkecvnk@31.59.20.176:6754/'
@@ -88,11 +91,18 @@ def handle_query(call):
             if mode == 'audio':
                 filename = os.path.splitext(filename)[0] + ".mp3"
 
+        # Upload to channel first, then send file_id to user
         with open(filename, 'rb') as f:
             if mode == 'video':
-                bot.send_video(call.message.chat.id, f, caption=info.get('title'))
+                # Upload to storage channel
+                stored_msg = bot.send_video(STORAGE_CHANNEL_ID, f, caption=f"Stored: {info.get('title')}")
+                # Send to user via file_id
+                bot.send_video(call.message.chat.id, stored_msg.video.file_id, caption=info.get('title'))
             else:
-                bot.send_audio(call.message.chat.id, f, caption=info.get('title'))
+                # Upload to storage channel
+                stored_msg = bot.send_audio(STORAGE_CHANNEL_ID, f, caption=f"Stored: {info.get('title')}")
+                # Send to user via file_id
+                bot.send_audio(call.message.chat.id, stored_msg.audio.file_id, caption=info.get('title'))
         
         os.remove(filename)
         bot.delete_message(call.message.chat.id, status.message_id)
