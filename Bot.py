@@ -24,7 +24,7 @@ def run_flask():
 bot = telebot.TeleBot("8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c")
 
 # ADD YOUR CHANNEL ID HERE (Use the -100 prefix)
-STORAGE_CHANNEL_ID = "-1006523949834" 
+STORAGE_CHANNEL_ID = "-1003931494429" 
 
 # Dictionary to store URLs temporarily
 user_links = {}
