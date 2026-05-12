@@ -1,17 +1,31 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from flask import Flask
-import threading
+import requests
 import os
 import yt_dlp
+from flask import Flask
+import threading
 from static_ffmpeg import add_paths
 
-# Ensure ffmpeg paths are added for audio conversion
+# Ensure ffmpeg paths are added for audio/video processing
 add_paths()
 
-# 1. Setup Flask
+# --- CONFIGURATION ---
+BOT_TOKEN = "8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c"
+STORAGE_CHANNEL_ID = "-1003931494429"
+OMDB_API_KEY = "43a3c1dc"  # Replace with your actual OMDb API key
+PROXY_URL = 'http://opfxmeil:dqti3mkecvnk@31.59.20.176:6754/'
+
+bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
+# Cache to store search results for callbacks
+# Format: { "imdb_id": "Movie Title Year" }
+movie_cache = {}
+# Dictionary to store URLs temporarily for YouTube links
+user_links = {}
+
+# 1. Setup Flask for Health Checks (Render)
 @app.route('/')
 def health_check():
     return "Bot is alive!", 200
@@ -20,25 +34,49 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# 2. Setup Bot
-bot = telebot.TeleBot("8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c")
-
-# ADD YOUR CHANNEL ID HERE (Use the -100 prefix)
-STORAGE_CHANNEL_ID = "-1003931494429" 
-
-# Dictionary to store URLs temporarily
-user_links = {}
-
+# 2. Bot Handlers
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Hello! I am your new bot. How can I help?")
+    bot.reply_to(message, "Hello! Send a YouTube link or use /movie [name] to search Archive.org.")
 
-@bot.message_handler(func=lambda m: 'youtube.com' in m.text or 'youtu.be' in m.text)
-def handle_video(message):
-    # Store URL for the callback handler
-    user_links[message.chat.id] = message.text
+# --- MOVIE SEARCH LOGIC ---
+@bot.message_handler(commands=['movie'])
+def search_movie_options(message):
+    query = message.text.replace('/movie', '').strip()
+    if not query:
+        bot.reply_to(message, "Usage: /movie [name]\nExample: /movie Batman")
+        return
+
+    url = f"http://www.omdbapi.com/?s={query}&apikey={OMDB_API_KEY}"
     
-    # Create the Menu
+    try:
+        response = requests.get(url).json()
+        if response.get('Response') == 'True':
+            markup = InlineKeyboardMarkup()
+            results = response.get('Search', [])[:5] # Show top 5 options
+            
+            for movie in results:
+                title = movie['Title']
+                year = movie['Year']
+                imdb_id = movie['imdbID']
+                
+                movie_cache[imdb_id] = f"{title} {year}"
+                
+                markup.add(InlineKeyboardButton(
+                    f"🎬 {title} ({year})", 
+                    callback_data=f"select_{imdb_id}"
+                ))
+            
+            bot.send_message(message.chat.id, f"Select the version of '{query}' to download:", reply_markup=markup)
+        else:
+            bot.reply_to(message, "❌ No movies found matching that name.")
+    except Exception as e:
+        bot.reply_to(message, f"Search Error: {str(e)}")
+
+# --- YOUTUBE LINK LOGIC ---
+@bot.message_handler(func=lambda m: 'youtube.com' in m.text or 'youtu.be' in m.text)
+def handle_youtube_link(message):
+    user_links[message.chat.id] = message.text
     markup = InlineKeyboardMarkup()
     markup.row_width = 2
     markup.add(
@@ -46,62 +84,66 @@ def handle_video(message):
         InlineKeyboardButton("Video (360p)", callback_data="vid_360"),
         InlineKeyboardButton("Audio (MP3)", callback_data="audio_mp3")
     )
-    bot.send_message(message.chat.id, "Select format and quality:", reply_markup=markup)
+    bot.send_message(message.chat.id, "Select format for YouTube download:", reply_markup=markup)
 
+# --- CALLBACK HANDLER (Selection & Downloading) ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_query(call):
-    url = user_links.get(call.message.chat.id)
-    if not url:
-        bot.answer_callback_query(call.id, "Error: Resend the link.")
-        return
+    mode = ""
+    target_url = ""
+    movie_name = ""
 
-    bot.answer_callback_query(call.id, "Starting download...")
-    status = bot.send_message(call.message.chat.id, "⏳ Processing and Cloud Saving...")
+    # Check if it's a Movie selection or YouTube download
+    if call.data.startswith("select_"):
+        imdb_id = call.data.replace("select_", "")
+        movie_name = movie_cache.get(imdb_id)
+        if not movie_name:
+            bot.answer_callback_query(call.id, "Session expired.")
+            return
+        target_url = f"https://archive.org/details/{movie_name.replace(' ', '+')}"
+        mode = 'video'
+    else:
+        target_url = user_links.get(call.message.chat.id)
+        if not target_url:
+            bot.answer_callback_query(call.id, "Link not found.")
+            return
+        mode = 'audio' if call.data == "audio_mp3" else 'video'
 
-    # Your strict proxy and download settings
-    proxy_url = 'http://opfxmeil:dqti3mkecvnk@31.59.20.176:6754/'
-    
-    if call.data == "audio_mp3":
+    bot.answer_callback_query(call.id, "Processing download...")
+    status = bot.send_message(call.message.chat.id, "⏳ Downloading and Cloud Saving...")
+
+    # yt-dlp Settings
+    if mode == 'audio':
         ydl_opts = {
-            'proxy': proxy_url,
+            'proxy': PROXY_URL,
             'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
             'outtmpl': '%(title)s.%(ext)s',
             'quiet': True
         }
-        mode = 'audio'
     else:
         res = "720" if "720" in call.data else "360"
         ydl_opts = {
-            'proxy': proxy_url,
-            'format': f'bestvideo[height<={res}][ext=mp4]+bestaudio[ext=m4a]/best[height<={res}][ext=mp4]/best',
+            'proxy': PROXY_URL,
+            'format': f'bestvideo[height<={res}][ext=mp4]+bestaudio[ext=m4a]/best',
             'outtmpl': '%(title)s.%(ext)s',
             'quiet': True
         }
-        mode = 'video'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(target_url, download=True)
             filename = ydl.prepare_filename(info)
             if mode == 'audio':
                 filename = os.path.splitext(filename)[0] + ".mp3"
 
-        # Upload to channel first, then send file_id to user
+        # Channel Storage Trick using the True ID
         with open(filename, 'rb') as f:
             if mode == 'video':
-                # Upload to storage channel
-                stored_msg = bot.send_video(STORAGE_CHANNEL_ID, f, caption=f"Stored: {info.get('title')}")
-                # Send to user via file_id
+                stored_msg = bot.send_video(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
                 bot.send_video(call.message.chat.id, stored_msg.video.file_id, caption=info.get('title'))
             else:
-                # Upload to storage channel
-                stored_msg = bot.send_audio(STORAGE_CHANNEL_ID, f, caption=f"Stored: {info.get('title')}")
-                # Send to user via file_id
+                stored_msg = bot.send_audio(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
                 bot.send_audio(call.message.chat.id, stored_msg.audio.file_id, caption=info.get('title'))
         
         os.remove(filename)
@@ -114,9 +156,8 @@ def handle_query(call):
 def echo_all(message):
     bot.reply_to(message, message.text)
 
-# 3. Start both
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-    print("Webserver started, bot is now polling...")
+    print("Bot is polling with Channel ID: -1003931494429")
     bot.infinity_polling()
 
