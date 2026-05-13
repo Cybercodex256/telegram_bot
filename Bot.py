@@ -13,7 +13,6 @@ add_paths()
 BOT_TOKEN = "8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c"
 STORAGE_CHANNEL_ID = "-1003931494429"
 OMDB_API_KEY = "43a3c1dc" 
-# PROXY IS EXACTLY THE SAME AS YOURS
 PROXY_URL = 'http://opfxmeil:dqti3mkecvnk@31.59.20.176:6754/'
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -69,7 +68,6 @@ def handle_query(call):
 
     status = bot.send_message(call.message.chat.id, "⏳ Downloading and Cloud Saving...")
 
-    # DYNAMIC OPTS: Uses 'best' for movies (Archive) and specific strings for YT
     if not is_movie and call.data == "audio_mp3":
         ydl_opts = {
             'proxy': PROXY_URL,
@@ -80,7 +78,7 @@ def handle_query(call):
     elif is_movie:
         ydl_opts = {
             'proxy': PROXY_URL,
-            'format': 'best', # Archive works best with simple 'best'
+            'format': 'best',
             'outtmpl': '%(title)s.%(ext)s', 'quiet': True
         }
     else:
@@ -98,10 +96,21 @@ def handle_query(call):
             if not is_movie and call.data == "audio_mp3":
                 filename = os.path.splitext(filename)[0] + ".mp3"
 
+        # --- REWRITTEN FIX SECTION ---
         with open(filename, 'rb') as f:
-            method = bot.send_audio if (not is_movie and call.data == "audio_mp3") else bot.send_video
-            stored_msg = method(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
-            method(call.message.chat.id, getattr(stored_msg, 'video' if hasattr(stored_msg, 'video') else 'audio').file_id)
+            if not is_movie and call.data == "audio_mp3":
+                stored_msg = bot.send_audio(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
+                if stored_msg and hasattr(stored_msg, 'audio'):
+                    bot.send_audio(call.message.chat.id, stored_msg.audio.file_id)
+                else:
+                    bot.send_message(call.message.chat.id, "❌ Error: Storage upload failed.")
+            else:
+                stored_msg = bot.send_video(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
+                if stored_msg and hasattr(stored_msg, 'video'):
+                    bot.send_video(call.message.chat.id, stored_msg.video.file_id)
+                else:
+                    bot.send_message(call.message.chat.id, "❌ Error: Storage upload failed.")
+        # --- END OF FIX ---
         
         os.remove(filename)
         bot.delete_message(call.message.chat.id, status.message_id)
@@ -111,3 +120,4 @@ def handle_query(call):
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
     bot.infinity_polling()
+
