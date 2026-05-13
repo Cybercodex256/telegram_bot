@@ -24,24 +24,39 @@ user_links = {}
 @app.route('/')
 def health_check(): return "Bot is alive!", 200
 
+# --- FIXED MOVIE SEARCH LOGIC ---
 @bot.message_handler(commands=['movie'])
 def search_movie_options(message):
     query = message.text.replace('/movie', '').strip()
     if not query:
         bot.reply_to(message, "Usage: /movie [name]")
         return
+
+    # 1. Try general search ('s=') for a list of options
     url = f"http://www.omdbapi.com/?s={query}&apikey={OMDB_API_KEY}"
     try:
         response = requests.get(url).json()
+        markup = InlineKeyboardMarkup()
+
         if response.get('Response') == 'True':
-            markup = InlineKeyboardMarkup()
             for movie in response.get('Search', [])[:5]:
                 title, year, imdb_id = movie['Title'], movie['Year'], movie['imdbID']
                 movie_cache[imdb_id] = f"{title} {year}"
                 markup.add(InlineKeyboardButton(f"🎬 {title} ({year})", callback_data=f"select_{imdb_id}"))
             bot.send_message(message.chat.id, f"Select version for '{query}':", reply_markup=markup)
+        
         else:
-            bot.reply_to(message, "❌ No movies found.")
+            # 2. FALLBACK: Try direct title search ('t=') if general search fails
+            fallback_url = f"http://www.omdbapi.com/?t={query}&apikey={OMDB_API_KEY}"
+            fb_res = requests.get(fallback_url).json()
+            
+            if fb_res.get('Response') == 'True':
+                title, year, imdb_id = fb_res['Title'], fb_res['Year'], fb_res['imdbID']
+                movie_cache[imdb_id] = f"{title} {year}"
+                markup.add(InlineKeyboardButton(f"🎬 {title} ({year})", callback_data=f"select_{imdb_id}"))
+                bot.send_message(message.chat.id, f"Found exact match for '{query}':", reply_markup=markup)
+            else:
+                bot.reply_to(message, "❌ No movies found. Try a shorter name.")
     except Exception as e:
         bot.reply_to(message, f"Search Error: {str(e)}")
 
@@ -62,9 +77,14 @@ def handle_query(call):
     if is_movie:
         imdb_id = call.data.replace("select_", "")
         movie_name = movie_cache.get(imdb_id)
+        # FIXED: Improved Archive search URL by using the cleaned OMDb title
         target_url = f"https://archive.org/details/{movie_name.replace(' ', '+')}"
     else:
         target_url = user_links.get(call.message.chat.id)
+
+    if not target_url:
+        bot.answer_callback_query(call.id, "Error: Data lost.")
+        return
 
     status = bot.send_message(call.message.chat.id, "⏳ Downloading and Cloud Saving...")
 
@@ -96,7 +116,7 @@ def handle_query(call):
             if not is_movie and call.data == "audio_mp3":
                 filename = os.path.splitext(filename)[0] + ".mp3"
 
-        # --- REWRITTEN FIX SECTION ---
+        # --- STORAGE CHANNEL UPLOAD ---
         with open(filename, 'rb') as f:
             if not is_movie and call.data == "audio_mp3":
                 stored_msg = bot.send_audio(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
@@ -110,7 +130,6 @@ def handle_query(call):
                     bot.send_video(call.message.chat.id, stored_msg.video.file_id)
                 else:
                     bot.send_message(call.message.chat.id, "❌ Error: Storage upload failed.")
-        # --- END OF FIX ---
         
         os.remove(filename)
         bot.delete_message(call.message.chat.id, status.message_id)
