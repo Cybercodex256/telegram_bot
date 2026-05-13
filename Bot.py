@@ -1,6 +1,5 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import requests
 import os
 import yt_dlp
 from flask import Flask
@@ -12,19 +11,19 @@ add_paths()
 # --- CONFIGURATION ---
 BOT_TOKEN = "8461671654:AAFHUEZDRTC0qaj2lGoCTOl-6z7KXp6364c"
 STORAGE_CHANNEL_ID = "-1003931494429"
-OMDB_API_KEY = "43a3c1dc" 
 PROXY_URL = 'http://opfxmeil:dqti3mkecvnk@31.59.20.176:6754/'
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
+# Cache for movie search results: { "index": {"title": "...", "url": "..."} }
 movie_cache = {}
 user_links = {}
 
 @app.route('/')
 def health_check(): return "Bot is alive!", 200
 
-# --- FIXED MOVIE SEARCH LOGIC ---
+# --- DIRECT INTERNET ARCHIVE SEARCH ---
 @bot.message_handler(commands=['movie'])
 def search_movie_options(message):
     query = message.text.replace('/movie', '').strip()
@@ -32,33 +31,43 @@ def search_movie_options(message):
         bot.reply_to(message, "Usage: /movie [name]")
         return
 
-    # 1. Try general search ('s=') for a list of options
-    url = f"http://www.omdbapi.com/?s={query}&apikey={OMDB_API_KEY}"
-    try:
-        response = requests.get(url).json()
-        markup = InlineKeyboardMarkup()
+    status = bot.reply_to(message, f"🔍 Searching Internet Archive for '{query}'...")
 
-        if response.get('Response') == 'True':
-            for movie in response.get('Search', [])[:5]:
-                title, year, imdb_id = movie['Title'], movie['Year'], movie['imdbID']
-                movie_cache[imdb_id] = f"{title} {year}"
-                markup.add(InlineKeyboardButton(f"🎬 {title} ({year})", callback_data=f"select_{imdb_id}"))
-            bot.send_message(message.chat.id, f"Select version for '{query}':", reply_markup=markup)
+    # yt-dlp search options for Archive.org
+    search_opts = {
+        'proxy': PROXY_URL,
+        'quiet': True,
+        'extract_flat': True, # Don't download yet, just get titles/URLs
+        'force_generic_extractor': True,
+    }
+
+    try:
+        # We search specifically within archive.org details
+        search_url = f"https://archive.org/details/movies?query={query.replace(' ', '+')}"
         
-        else:
-            # 2. FALLBACK: Try direct title search ('t=') if general search fails
-            fallback_url = f"http://www.omdbapi.com/?t={query}&apikey={OMDB_API_KEY}"
-            fb_res = requests.get(fallback_url).json()
+        with yt_dlp.YoutubeDL(search_opts) as ydl:
+            result = ydl.extract_info(search_url, download=False)
             
-            if fb_res.get('Response') == 'True':
-                title, year, imdb_id = fb_res['Title'], fb_res['Year'], fb_res['imdbID']
-                movie_cache[imdb_id] = f"{title} {year}"
-                markup.add(InlineKeyboardButton(f"🎬 {title} ({year})", callback_data=f"select_{imdb_id}"))
-                bot.send_message(message.chat.id, f"Found exact match for '{query}':", reply_markup=markup)
-            else:
-                bot.reply_to(message, "❌ No movies found. Try a shorter name.")
+            # Extract entries from search result
+            entries = result.get('entries', [])[:5] 
+            
+            if not entries:
+                bot.edit_message_text("❌ No movies found on Archive.org.", message.chat.id, status.message_id)
+                return
+
+            markup = InlineKeyboardMarkup()
+            for i, entry in enumerate(entries):
+                title = entry.get('title') or entry.get('id')
+                url = entry.get('url') or f"https://archive.org/details/{entry.get('id')}"
+                
+                # Store in cache using index as key
+                movie_cache[str(i)] = {"title": title, "url": url}
+                markup.add(InlineKeyboardButton(f"🎬 {title[:40]}...", callback_data=f"ia_{i}"))
+
+            bot.edit_message_text(f"Select a version for '{query}':", message.chat.id, status.message_id, reply_markup=markup)
+
     except Exception as e:
-        bot.reply_to(message, f"Search Error: {str(e)}")
+        bot.edit_message_text(f"❌ Search Error: {str(e)}", message.chat.id, status.message_id)
 
 @bot.message_handler(func=lambda m: 'youtube.com' in m.text or 'youtu.be' in m.text)
 def handle_youtube_link(message):
@@ -71,43 +80,43 @@ def handle_youtube_link(message):
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_query(call):
-    is_movie = call.data.startswith("select_")
+    is_movie = call.data.startswith("ia_")
     target_url = ""
+    file_title = ""
     
     if is_movie:
-        imdb_id = call.data.replace("select_", "")
-        movie_name = movie_cache.get(imdb_id)
-        # FIXED: Improved Archive search URL by using the cleaned OMDb title
-        target_url = f"https://archive.org/details/{movie_name.replace(' ', '+')}"
+        idx = call.data.replace("ia_", "")
+        movie_info = movie_cache.get(idx)
+        if not movie_info:
+            bot.answer_callback_query(call.id, "Error: Search expired.")
+            return
+        target_url = movie_info['url']
+        file_title = movie_info['title']
     else:
         target_url = user_links.get(call.message.chat.id)
 
     if not target_url:
-        bot.answer_callback_query(call.id, "Error: Data lost.")
+        bot.answer_callback_query(call.id, "Error: Link not found.")
         return
 
-    status = bot.send_message(call.message.chat.id, "⏳ Downloading and Cloud Saving...")
+    status = bot.send_message(call.message.chat.id, f"⏳ Downloading: {file_title if is_movie else 'YouTube Video'}...")
+
+    # yt-dlp Options
+    ydl_opts = {
+        'proxy': PROXY_URL,
+        'format': 'best', # Internet Archive works best with 'best' to get a single file
+        'outtmpl': '%(title)s.%(ext)s',
+        'quiet': True,
+    }
 
     if not is_movie and call.data == "audio_mp3":
-        ydl_opts = {
-            'proxy': PROXY_URL,
+        ydl_opts.update({
             'format': 'bestaudio/best',
             'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-            'outtmpl': '%(title)s.%(ext)s', 'quiet': True
-        }
-    elif is_movie:
-        ydl_opts = {
-            'proxy': PROXY_URL,
-            'format': 'best',
-            'outtmpl': '%(title)s.%(ext)s', 'quiet': True
-        }
-    else:
+        })
+    elif not is_movie:
         res = "720" if "720" in call.data else "360"
-        ydl_opts = {
-            'proxy': PROXY_URL,
-            'format': f'bestvideo[height<={res}][ext=mp4]+bestaudio[ext=m4a]/best',
-            'outtmpl': '%(title)s.%(ext)s', 'quiet': True
-        }
+        ydl_opts['format'] = f'bestvideo[height<={res}][ext=mp4]+bestaudio[ext=m4a]/best'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -116,20 +125,14 @@ def handle_query(call):
             if not is_movie and call.data == "audio_mp3":
                 filename = os.path.splitext(filename)[0] + ".mp3"
 
-        # --- STORAGE CHANNEL UPLOAD ---
+        # Safe Storage Upload
         with open(filename, 'rb') as f:
             if not is_movie and call.data == "audio_mp3":
                 stored_msg = bot.send_audio(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
-                if stored_msg and hasattr(stored_msg, 'audio'):
-                    bot.send_audio(call.message.chat.id, stored_msg.audio.file_id)
-                else:
-                    bot.send_message(call.message.chat.id, "❌ Error: Storage upload failed.")
+                bot.send_audio(call.message.chat.id, stored_msg.audio.file_id)
             else:
                 stored_msg = bot.send_video(STORAGE_CHANNEL_ID, f, caption=f"File: {info.get('title')}")
-                if stored_msg and hasattr(stored_msg, 'video'):
-                    bot.send_video(call.message.chat.id, stored_msg.video.file_id)
-                else:
-                    bot.send_message(call.message.chat.id, "❌ Error: Storage upload failed.")
+                bot.send_video(call.message.chat.id, stored_msg.video.file_id)
         
         os.remove(filename)
         bot.delete_message(call.message.chat.id, status.message_id)
